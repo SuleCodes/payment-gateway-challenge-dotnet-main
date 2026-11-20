@@ -1,5 +1,7 @@
 # Instructions for candidates
 
+> **Technical overview of this solution:** see [README-TECH.md](README-TECH.md) for architecture, design decisions and how to run it. Planned work is tracked in [TODO.md](TODO.md).
+
 This is the .NET version of the Payment Gateway challenge. If you haven't already read this [README.md](https://github.com/cko-recruitment/) on the details of this exercise, please do so now. 
 
 ## Template structure
