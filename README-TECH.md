@@ -11,7 +11,7 @@ The solution follows **Clean / Onion Architecture**. Each layer is a separate pr
 ```
 ┌───────────────────────────────────────────────────────────┐
 │  Presentation (PaymentGateway.Api)                        │
-│  Controllers · Request/Response DTOs · Program.cs         │
+│  Controllers · DTOs · Mappings · Program.cs               │
 │   ┌───────────────────────────────────────────────────┐   │
 │   │  Infrastructure (PaymentGateway.Infrastructure)   │   │
 │   │  PaymentsRepository · (later) BankClient          │   │
@@ -34,7 +34,7 @@ Solid arrows are project references ("depends on"). The dashed arrow is an inter
 
 ```mermaid
 flowchart TD
-    Api["<b>Presentation</b><br/>PaymentGateway.Api<br/><i>Controllers, DTOs, composition root</i>"]
+    Api["<b>Presentation</b><br/>PaymentGateway.Api<br/><i>Controllers, DTOs, Mappings, composition root</i>"]
     Infra["<b>Infrastructure</b><br/>PaymentGateway.Infrastructure<br/><i>PaymentsRepository</i>"]
     App["<b>Application</b><br/>PaymentGateway.Application<br/><i>PaymentService, IPaymentsRepository</i>"]
     Domain["<b>Domain</b><br/>PaymentGateway.Domain<br/><i>Payment, PaymentStatus</i>"]
@@ -54,7 +54,7 @@ flowchart TD
 | `PaymentGateway.Domain` | Business entities and rules (`Payment`, `PaymentStatus`). No framework dependencies. | Common |
 | `PaymentGateway.Application` | Use cases (`PaymentService`) and the interfaces it needs from the outside world (`IPaymentsRepository`). | Domain, Common |
 | `PaymentGateway.Infrastructure` | Implementations of Application's interfaces: storage now, the bank HTTP client later. | Application |
-| `PaymentGateway.Api` | HTTP concerns: routing, request and response contracts, status codes. Also the **composition root** that wires everything together in `Program.cs`. | Application, Infrastructure |
+| `PaymentGateway.Api` | HTTP concerns: routing, request and response contracts, status codes, and explicit mapping from domain to contract (`Mappings/`). Also the **composition root** that wires everything together in `Program.cs`. | Application, Infrastructure |
 | `PaymentGateway.Common` | Cross-cutting building blocks shared by inner layers. | — |
 
 > **Why does Api reference Infrastructure?** Only so `Program.cs` can call `AddInfrastructure()` to register implementations. Controllers depend on `IPaymentService` and never use Infrastructure types directly.
@@ -78,7 +78,8 @@ sequenceDiagram
     Impl-->>S: Payment?
     S-->>C: Payment?
     alt found
-        C-->>Client: 200 OK + payment
+        C->>C: payment.ToGetPaymentResponse()
+        C-->>Client: 200 OK + GetPaymentResponse
     else not found
         C-->>Client: 404 ProblemDetails
     end
@@ -88,4 +89,4 @@ sequenceDiagram
 
 - **Testability:** `PaymentService` can be unit tested with a fake `IPaymentsRepository` (and later a fake bank client), with no HTTP or storage involved.
 - **Replaceable infrastructure:** swapping the in-memory store for a database, or the bank simulator for a real acquirer, only touches Infrastructure and its DI registration.
-- **Stable API contracts:** request and response DTOs live in the Api project, so the HTTP contract can change without touching the domain, and the reverse.
+- **Stable API contracts:** request and response DTOs live in the Api project, so the HTTP contract can change without touching the domain, and the reverse. Controllers never serialise domain entities: they map explicitly (`payment.ToGetPaymentResponse()`), so internal fields can't leak into responses by accident. Mapping is hand-written rather than AutoMapper, so it is compile-checked and easy to read.
