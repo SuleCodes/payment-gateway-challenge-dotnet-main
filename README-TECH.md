@@ -14,10 +14,11 @@ The solution follows **Clean / Onion Architecture**. Each layer is a separate pr
 │  Controllers · DTOs · Mappings · Program.cs               │
 │   ┌───────────────────────────────────────────────────┐   │
 │   │  Infrastructure (PaymentGateway.Infrastructure)   │   │
-│   │  PaymentsRepository · (later) BankClient          │   │
+│   │  PaymentsRepository · BankClient                  │   │
 │   │   ┌───────────────────────────────────────────┐   │   │
 │   │   │  Application (PaymentGateway.Application) │   │   │
 │   │   │  PaymentService · IPaymentsRepository     │   │   │
+│   │   │  IBankClient                              │   │   │
 │   │   │   ┌───────────────────────────────────┐   │   │   │
 │   │   │   │  Domain (PaymentGateway.Domain)   │   │   │   │
 │   │   │   │  Payment · PaymentStatus          │   │   │   │
@@ -25,7 +26,7 @@ The solution follows **Clean / Onion Architecture**. Each layer is a separate pr
 │   │   └───────────────────────────────────────────┘   │   │
 │   └───────────────────────────────────────────────────┘   │
 └───────────────────────────────────────────────────────────┘
-        Common (PaymentGateway.Common): shared, no dependencies
+        Common (PaymentGateway.Common): Result/Error, no dependencies
 ```
 
 ### Project dependencies
@@ -35,10 +36,10 @@ Solid arrows are project references ("depends on"). The dashed arrow is an inter
 ```mermaid
 flowchart TD
     Api["<b>Presentation</b><br/>PaymentGateway.Api<br/><i>Controllers, DTOs, Mappings, composition root</i>"]
-    Infra["<b>Infrastructure</b><br/>PaymentGateway.Infrastructure<br/><i>PaymentsRepository</i>"]
-    App["<b>Application</b><br/>PaymentGateway.Application<br/><i>PaymentService, IPaymentsRepository</i>"]
+    Infra["<b>Infrastructure</b><br/>PaymentGateway.Infrastructure<br/><i>PaymentsRepository, BankClient</i>"]
+    App["<b>Application</b><br/>PaymentGateway.Application<br/><i>PaymentService, IPaymentsRepository, IBankClient</i>"]
     Domain["<b>Domain</b><br/>PaymentGateway.Domain<br/><i>Payment, PaymentStatus</i>"]
-    Common["<b>Common</b><br/>PaymentGateway.Common<br/><i>shared building blocks</i>"]
+    Common["<b>Common</b><br/>PaymentGateway.Common<br/><i>Result, Error</i>"]
 
     Api --> App
     Api -- "DI registration only" --> Infra
@@ -46,16 +47,16 @@ flowchart TD
     App --> Domain
     App --> Common
     Domain --> Common
-    Infra -. "implements IPaymentsRepository" .-> App
+    Infra -. "implements IPaymentsRepository, IBankClient" .-> App
 ```
 
 | Project | Responsibility | References |
 |---|---|---|
 | `PaymentGateway.Domain` | Business entities and rules (`Payment`, `PaymentStatus`). No framework dependencies. | Common |
-| `PaymentGateway.Application` | Use cases (`PaymentService`) and the interfaces it needs from the outside world (`IPaymentsRepository`). | Domain, Common |
-| `PaymentGateway.Infrastructure` | Implementations of Application's interfaces: storage now, the bank HTTP client later. | Application |
+| `PaymentGateway.Application` | Use cases (`PaymentService`) and the interfaces it needs from the outside world (`IPaymentsRepository`, `IBankClient`). | Domain, Common |
+| `PaymentGateway.Infrastructure` | Implementations of Application's interfaces: in-memory storage and the typed bank `HttpClient` (`BankOptions` from config). | Application |
 | `PaymentGateway.Api` | HTTP concerns: routing, request and response contracts, status codes, and explicit mapping from domain to contract (`Mappings/`). Also the **composition root** that wires everything together in `Program.cs`. | Application, Infrastructure |
-| `PaymentGateway.Common` | Cross-cutting building blocks shared by inner layers. | — |
+| `PaymentGateway.Common` | Cross-cutting building blocks shared by inner layers: `Result<T>` and `Error` for expected failures. | — |
 
 > **Why does Api reference Infrastructure?** Only so `Program.cs` can call `AddInfrastructure()` to register implementations. Controllers depend on `IPaymentService` and never use Infrastructure types directly.
 
@@ -85,9 +86,61 @@ sequenceDiagram
     end
 ```
 
+### Runtime flow: `POST /api/payments`
+
+```mermaid
+sequenceDiagram
+    participant Client as Merchant
+    participant C as PaymentsController<br/>(Api)
+    participant V as PostPaymentRequestValidator<br/>(Api)
+    participant S as PaymentService<br/>(Application)
+    participant B as BankClient<br/>(Infrastructure)
+    participant Bank as Acquiring bank
+    participant R as PaymentsRepository<br/>(Infrastructure)
+
+    Client->>C: POST /api/payments
+    C->>V: ValidateAsync(request)
+    alt invalid
+        C-->>Client: 400 ValidationProblemDetails (Rejected, bank not called)
+    else valid
+        C->>S: ProcessPaymentAsync(command)
+        S->>B: AuthorizeAsync(...) via IBankClient
+        B->>Bank: POST /payments (card_number, expiry_date MM/YYYY, ...)
+        alt bank gave a decision
+            Bank-->>B: 200 {authorized, authorization_code}
+            B-->>S: Result: BankAuthorization
+            S->>R: Add(payment: last four only)
+            S-->>C: Result: Payment
+            C-->>Client: 201 Created + Location + PostPaymentResponse
+        else 5xx / timeout / network error
+            B-->>S: Result: Error
+            S-->>C: Result: PaymentErrors.BankUnavailable
+            C-->>Client: 502 ProblemDetails (nothing stored)
+        end
+    end
+```
+
+### Payment outcomes
+
+| Outcome | HTTP | Body | Stored? | Bank called? |
+|---|---|---|---|---|
+| **Authorized** | `201 Created` + `Location` | `PostPaymentResponse`, `status: "Authorized"` | Yes | Yes |
+| **Declined** | `201 Created` + `Location` | `PostPaymentResponse`, `status: "Declined"` | Yes | Yes |
+| **Rejected** (invalid request) | `400 Bad Request` | `ValidationProblemDetails` with camelCase field errors | No | **No** |
+| **Bank unavailable** (5xx, timeout, network error) | `502 Bad Gateway` | `ProblemDetails` | No | Yes, no decision returned |
+
+Decisions behind this:
+
+- **Declined is a success at the HTTP level.** The gateway did its job: a payment was created and the bank made a decision. `status` carries the business outcome.
+- **Rejected returns 400 and creates nothing.** The brief says no payment is created when invalid information is supplied, so there is no resource to return or retrieve later.
+- **Bank unavailable returns 502, not 500.** The gateway is healthy but its upstream failed. Nothing is stored because the bank gave no decision, so the merchant can safely retry. (Retries and idempotency keys are Phase 3.)
+- **Expected outcomes are `Result<T>`, not exceptions.** `BankClient` turns HTTP failures into an `Error`, and the service and controller handle it explicitly. Exceptions are reserved for bugs.
+- **Card data:** the full card number and CVV go to the bank only. The stored `Payment` keeps the last four digits. The bank's `authorization_code` is stored but not returned to merchants.
+- **Bank settings** (`Bank:BaseUrl`, `Bank:Timeout`) come from configuration and are validated at startup, so a misconfigured deployment fails fast instead of on the first payment.
+
 ### What this buys us
 
-- **Testability:** `PaymentService` can be unit tested with a fake `IPaymentsRepository` (and later a fake bank client), with no HTTP or storage involved.
+- **Testability:** `PaymentService` can be unit tested with a fake `IPaymentsRepository` and a fake `IBankClient`, with no HTTP or storage involved.
 - **Replaceable infrastructure:** swapping the in-memory store for a database, or the bank simulator for a real acquirer, only touches Infrastructure and its DI registration.
 - **Stable API contracts:** request and response DTOs live in the Api project, so the HTTP contract can change without touching the domain, and the reverse. Controllers never serialise domain entities: they map explicitly (`payment.ToGetPaymentResponse()`), so internal fields can't leak into responses by accident. Mapping is hand-written rather than AutoMapper, so it is compile-checked and easy to read.
 

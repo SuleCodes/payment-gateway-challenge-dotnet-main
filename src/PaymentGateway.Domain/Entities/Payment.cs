@@ -15,4 +15,7 @@ public class Payment
     public required int ExpiryYear { get; init; }
     public required string Currency { get; init; }
     public required int Amount { get; init; }
+
+    /// <summary>Code returned by the bank for an authorized payment. Internal: not exposed to merchants.</summary>
+    public string? AuthorizationCode { get; init; }
 }
