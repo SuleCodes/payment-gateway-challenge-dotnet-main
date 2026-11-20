@@ -7,7 +7,7 @@ namespace PaymentGateway.Api.Controllers;
 
 [Route("api/[controller]")]
 [ApiController]
-public class PaymentsController : Controller
+public class PaymentsController : ControllerBase
 {
     private readonly PaymentsRepository _paymentsRepository;
 
@@ -17,7 +17,9 @@ public class PaymentsController : Controller
     }
 
     [HttpGet("{id:guid}")]
-    public async Task<ActionResult<PostPaymentResponse?>> GetPaymentAsync(Guid id)
+    [ProducesResponseType(typeof(GetPaymentResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public ActionResult<GetPaymentResponse?> GetPaymentAsync(Guid id)
     {
         var payment = _paymentsRepository.Get(id);
 
