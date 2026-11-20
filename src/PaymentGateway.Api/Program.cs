@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 using FluentValidation;
 
+using PaymentGateway.Api.Middleware;
 using PaymentGateway.Api.Validators;
 using PaymentGateway.Application;
 using PaymentGateway.Infrastructure;
@@ -30,6 +31,9 @@ builder.Services
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+// First, so every later log line (including errors) carries the correlation id.
+app.UseMiddleware<CorrelationIdMiddleware>();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

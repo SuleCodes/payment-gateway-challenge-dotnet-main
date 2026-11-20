@@ -30,7 +30,6 @@ public class PostPaymentRequestValidator : AbstractValidator<PostPaymentRequest>
         RuleFor(r => r.ExpiryYear)
             .NotNull();
 
-        // Only checked once month and year are individually valid, to avoid piling up errors.
         RuleFor(r => r)
             .Must(r => IsInFuture(r.ExpiryMonth!.Value, r.ExpiryYear!.Value, timeProvider))
             .When(r => r.ExpiryMonth is >= 1 and <= 12 && r.ExpiryYear is not null)

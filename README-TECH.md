@@ -118,3 +118,36 @@ Design notes:
 - **One error per field** (`RuleLevelCascadeMode = CascadeMode.Stop`): an empty card number reports "required", not "required" and "wrong length" and "not numeric".
 - **The validator is in the Api layer** because it validates the HTTP contract (`PostPaymentRequest`). Business rules that hold however a payment arrives belong in Domain/Application.
 - **Why FluentValidation over DataAnnotations:** the cross-field expiry rule and the injected clock are awkward with attributes. Validators are plain classes that are easy to unit test.
+
+## Observability
+
+### Correlation id
+
+Every request carries a correlation id, so one merchant call can be followed through every log line (and, from Phase 2, into the call to the bank).
+
+- `CorrelationIdMiddleware` runs **first** in the pipeline.
+- If the request has an `X-Correlation-Id` header with a safe value (`[A-Za-z0-9._-]`, at most 64 characters), it is used. Otherwise a new GUID is generated. Unsafe values are replaced rather than rejected, to avoid log injection and oversized headers without failing the merchant's call.
+- The id is returned in the `X-Correlation-Id` response header (including on 404s and errors) and pushed into the **logging scope**, so every log line written during the request includes `CorrelationId` without any code having to pass it around.
+
+### Logging conventions
+
+Follow these for any new log line:
+
+| Rule | Example |
+|---|---|
+| **Structured templates, never string interpolation.** Values become queryable fields. | `LogInformation("Payment {PaymentId} retrieved with status {PaymentStatus}", id, status)` |
+| **Consistent property names** across the codebase. | `PaymentId`, `PaymentStatus`, `CorrelationId` |
+| **Log business outcomes in the Application layer**, not in controllers. Controllers stay thin. | `PaymentService` logs found / not found |
+| **Never log card data.** No PAN, no CVV, no full request bodies. The last four digits are the most that may appear. | |
+| **Levels:** `Information` for normal business events (including "not found"), `Warning` for unexpected but handled situations (e.g. bank retry), `Error` for failures needing attention. | |
+
+### Log output
+
+- **Production** (`appsettings.json`): JSON console logs with scopes and UTC timestamps, ready for a log collector.
+- **Development** (`appsettings.Development.json`): single-line, human-readable output, also with scopes.
+
+Example (Development):
+
+```
+info: PaymentGateway.Application.Payments.PaymentService[0] => ... => CorrelationId:demo-456 => ... Payment 00000000-0000-0000-0000-000000000002 not found
+```
