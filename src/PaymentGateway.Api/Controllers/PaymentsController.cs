@@ -19,10 +19,15 @@ public class PaymentsController : ControllerBase
     [HttpGet("{id:guid}")]
     [ProducesResponseType(typeof(GetPaymentResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
-    public ActionResult<GetPaymentResponse?> GetPaymentAsync(Guid id)
+    public ActionResult<GetPaymentResponse> GetPayment(Guid id)
     {
         var payment = _paymentsRepository.Get(id);
 
-        return new OkObjectResult(payment);
+        if (payment is null)
+        {
+            return NotFound();
+        }
+
+        return Ok(payment);
     }
 }
