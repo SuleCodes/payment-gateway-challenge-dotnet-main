@@ -13,13 +13,14 @@ namespace PaymentGateway.Api.Mappings;
 public static class PaymentMappings
 {
     /// <summary>Only call on a request that has passed validation: required fields are assumed present.</summary>
-    public static ProcessPaymentCommand ToCommand(this PostPaymentRequest request) => new(
+    public static ProcessPaymentCommand ToCommand(this PostPaymentRequest request, string? idempotencyKey) => new(
         request.CardNumber!,
         request.ExpiryMonth!.Value,
         request.ExpiryYear!.Value,
         request.Currency!,
         request.Amount!.Value,
-        request.Cvv!);
+        request.Cvv!,
+        idempotencyKey);
 
     public static PostPaymentResponse ToPostPaymentResponse(this Payment payment) => new()
     {

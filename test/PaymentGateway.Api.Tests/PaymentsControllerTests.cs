@@ -50,7 +50,7 @@ public class PaymentsControllerTests
             .CreateClient();
 
         // Act
-        var response = await client.GetAsync($"/api/Payments/{payment.Id}");
+        var response = await client.GetAsync($"/api/v1/payments/{payment.Id}");
         var paymentResponse = await response.Content.ReadFromJsonAsync<GetPaymentResponse>(JsonOptions);
         
         // Assert
@@ -82,7 +82,7 @@ public class PaymentsControllerTests
             .CreateClient();
 
         // Act
-        var json = await client.GetStringAsync($"/api/Payments/{payment.Id}");
+        var json = await client.GetStringAsync($"/api/v1/payments/{payment.Id}");
 
         // Assert: raw JSON, so the contract itself is checked rather than what a lenient deserialiser accepts
         Assert.Contains("\"status\":\"Authorized\"", json);
@@ -97,7 +97,7 @@ public class PaymentsControllerTests
         var client = webApplicationFactory.CreateClient();
         
         // Act
-        var response = await client.GetAsync($"/api/Payments/{Guid.NewGuid()}");
+        var response = await client.GetAsync($"/api/v1/payments/{Guid.NewGuid()}");
         
         // Assert
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);

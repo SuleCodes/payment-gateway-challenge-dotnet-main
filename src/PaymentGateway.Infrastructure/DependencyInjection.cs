@@ -19,6 +19,7 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddSingleton<IPaymentsRepository, PaymentsRepository>();
+        services.AddSingleton<IIdempotencyStore, IdempotencyStore>();
 
         services.AddOptions<BankOptions>()
             .Bind(configuration.GetSection(BankOptions.SectionName))
@@ -30,7 +31,6 @@ public static class DependencyInjection
             {
                 var options = sp.GetRequiredService<IOptions<BankOptions>>().Value;
                 client.BaseAddress = options.BaseUrl;
-                // HttpClient.Timeout wraps the whole handler pipeline, so it bounds all retries together.
                 client.Timeout = options.Timeout;
             })
             .AddResilienceHandler("bank", (pipeline, context) =>

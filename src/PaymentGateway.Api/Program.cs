@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
 
+using Asp.Versioning;
+
 using FluentValidation;
 
 using PaymentGateway.Api.Middleware;
@@ -17,6 +19,20 @@ builder.Services
         // Enums go over the wire as names ("Authorized"), not numbers, so the contract is readable
         // and doesn't break if enum members are reordered.
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
+builder.Services
+    .AddApiVersioning(options =>
+    {
+        options.DefaultApiVersion = new ApiVersion(1);
+        options.ReportApiVersions = true; // api-supported-versions response header
+        options.ApiVersionReader = new UrlSegmentApiVersionReader();
+    })
+    .AddMvc()
+    .AddApiExplorer(options =>
+    {
+        options.GroupNameFormat = "'v'VVV"; // Swagger document "v1"
+        options.SubstituteApiVersionInUrl = true; // Swagger shows /api/v1/payments, not a {version} parameter
+    });
 
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddValidatorsFromAssemblyContaining<PostPaymentRequestValidator>();

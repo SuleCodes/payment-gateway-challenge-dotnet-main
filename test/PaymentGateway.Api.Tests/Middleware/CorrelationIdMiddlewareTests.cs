@@ -34,7 +34,7 @@ public class CorrelationIdMiddlewareTests : IClassFixture<WebApplicationFactory<
 
     private Task<HttpResponseMessage> SendAsync(string? correlationId)
     {
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/Payments/{Guid.NewGuid()}");
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/v1/payments/{Guid.NewGuid()}");
         if (correlationId is not null)
         {
             request.Headers.TryAddWithoutValidation(CorrelationIdMiddleware.HeaderName, correlationId);
