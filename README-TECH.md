@@ -133,10 +133,29 @@ Decisions behind this:
 
 - **Declined is a success at the HTTP level.** The gateway did its job: a payment was created and the bank made a decision. `status` carries the business outcome.
 - **Rejected returns 400 and creates nothing.** The brief says no payment is created when invalid information is supplied, so there is no resource to return or retrieve later.
-- **Bank unavailable returns 502, not 500.** The gateway is healthy but its upstream failed. Nothing is stored because the bank gave no decision, so the merchant can safely retry. (Retries and idempotency keys are Phase 3.)
+- **Bank unavailable returns 502, not 500.** The gateway is healthy but its upstream failed. Nothing is stored because the bank gave no decision, so the merchant can safely retry. Before giving up, the gateway retries the bank itself, but only when that is safe (see below).
 - **Expected outcomes are `Result<T>`, not exceptions.** `BankClient` turns HTTP failures into an `Error`, and the service and controller handle it explicitly. Exceptions are reserved for bugs.
 - **Card data:** the full card number and CVV go to the bank only. The stored `Payment` keeps the last four digits. The bank's `authorization_code` is stored but not returned to merchants.
 - **Bank settings** (`Bank:BaseUrl`, `Bank:Timeout`) come from configuration and are validated at startup, so a misconfigured deployment fails fast instead of on the first payment.
+
+### Retrying the bank (Polly)
+
+The bank `HttpClient` has a **Polly** retry strategy, added with `AddResilienceHandler` (`Microsoft.Extensions.Http.Resilience`, Polly v8) in `Infrastructure/DependencyInjection.cs`. `BankClient` itself has no retry code: it only sees the final response.
+
+**Retrying a payment can charge a card twice.** If the bank authorised the payment but its response never reached us, a retry sends a second authorisation. So the gateway retries only when the bank **cannot** have processed the request:
+
+| Failure | Retried? | Why |
+|---|---|---|
+| `503 Service Unavailable` | Yes | The bank explicitly refused to handle the request. |
+| Connection error (`HttpRequestError.ConnectionError`) | Yes | The request never reached the bank. |
+| `500`, `502`, `504` | No | The bank, or something in front of it, may have processed the payment. |
+| Timeout, or connection dropped mid-response | No | Same: the request may have been processed. |
+| `4xx` | No | Retrying the same request gives the same answer. |
+
+- **Bounded:** `Bank:MaxRetryAttempts` (default 2, at most 5, `0` turns retries off), exponential backoff from `Bank:RetryDelay` (200 ms) with jitter, so many gateway instances don't retry in lockstep.
+- **`Bank:Timeout` covers all attempts together.** `HttpClient.Timeout` wraps the whole handler pipeline, so retries can never make the merchant wait longer than the timeout.
+- **Each retry is logged** as a `Warning` with the correlation id: `Bank call failed (503), retry 1 of 2 in 246 ms`. Polly's own logs are set to `Error`, so only the "retries exhausted" line from Polly appears.
+- **The real fix for the unsafe cases is idempotency.** An `Idempotency-Key` that the bank honours would make every failure safe to retry. Until then, the merchant gets a `502` and decides.
 
 ### What this buys us
 
