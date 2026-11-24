@@ -9,7 +9,7 @@ using PaymentGateway.Api.Tests.Fakes;
 using PaymentGateway.Application.Abstractions;
 using PaymentGateway.Common.Results;
 
-namespace PaymentGateway.Api.Tests;
+namespace PaymentGateway.Api.Tests.Api.Controllers;
 
 public class PostPaymentTests
 {

@@ -273,13 +273,6 @@ Bank__BaseUrl: http://bank_simulator:8080/   # overrides Bank:BaseUrl
 
 Inside the compose network the bank is reached by its **service name**, not `localhost`: `localhost` inside the gateway container is the gateway itself. The same mechanism would supply secrets and per-environment settings in a real deployment, without rebuilding the image.
 
-### Not done yet
-
-- **No `HEALTHCHECK`.** It needs a `/health/live` endpoint (Phase 4).
-- **`depends_on` only orders startup.** It doesn't wait for the simulator to be ready. That's fine here: a payment that arrives too early gets a `502`, and the merchant can retry.
-- **HTTP only.** TLS would terminate at a load balancer or ingress in front of the container. `UseHttpsRedirection` logs one "failed to determine the https port" warning at startup for this reason.
-- **Smaller image.** A chiseled (distroless) `aspnet:8.0-jammy-chiseled` base would reduce size and attack surface: no shell, no package manager.
-
 ## Quick reference
 
 All commands run from the repository root (the folder with `docker-compose.yml`).
@@ -311,3 +304,38 @@ The containers keep running in the background until you stop them, even after th
 | Payments API | `http://localhost:5000/api/v1/payments` | `https://localhost:7092/api/v1/payments` |
 | Swagger | Not enabled (Production mode) | `https://localhost:7092/swagger` |
 | Bank simulator | `http://localhost:8080` | `http://localhost:8080` (from Docker) |
+
+## Not done yet
+
+What I would do next, given more time. Each item is also tracked in [TODO.md](TODO.md#next-steps).
+
+### Testing & CI
+
+- **CI with a coverage policy.** A GitHub Actions workflow to restore, build and run the tests on every push and pull request, failing the build if code coverage drops below a set threshold.
+- **Share test hosts.** The integration tests create a new `WebApplicationFactory` per test. Sharing one per class with `IClassFixture` would make them faster.
+- **More unit tests and structure.** Tests for the repository and idempotency store, one test project per layer, and architecture tests (e.g. NetArchTest) that fail if an inner layer references an outer one.
+- **End-to-end tests against the simulator**, in a separate category so the default `dotnet test` run doesn't need Docker.
+
+### Observability
+
+- **Send the correlation id to the bank.** A `DelegatingHandler` on the bank `HttpClient` would add `X-Correlation-Id` to outbound calls, so one payment can be traced across both systems.
+- **Health checks.** `/health/live` with no checks (a restart can't fix a dependency), and `/health/ready` checking the bank but reporting `Degraded` rather than `Unhealthy`, so a bank outage doesn't take every instance out of the load balancer. Then a Docker `HEALTHCHECK` on `/health/live`.
+- **Global exception handler.** `AddProblemDetails` + `UseExceptionHandler`, so an unexpected error returns ProblemDetails and is logged, instead of a bare `500`.
+- **Metrics and traces** with OpenTelemetry: payments by status, bank latency, bank errors.
+
+### Documentation
+
+- **Swagger shows the XML comments.** `GenerateDocumentationFile` + `IncludeXmlComments`, so the response descriptions already written on the controller appear in Swagger, plus request examples.
+- **Running without Docker:** `npx mountebank@2.8.1 --configfile imposters/bank_simulator.ejs --allowInjection`.
+
+### Hosting
+
+- **`depends_on` only orders startup.** It doesn't wait for the simulator to be ready. That's fine here: a payment that arrives too early gets a `502`, and the merchant can retry.
+- **HTTP only.** TLS would terminate at a load balancer or ingress in front of the container. `UseHttpsRedirection` logs one "failed to determine the https port" warning at startup for this reason.
+- **Smaller image.** A chiseled (distroless) `aspnet:8.0-jammy-chiseled` base would reduce size and attack surface: no shell, no package manager.
+
+### Production hardening
+
+- **Shared stores** (database, Redis) instead of in-memory, so every instance sees the same payments and idempotency keys. Idempotency keys scoped per merchant and expired after 24 hours.
+- **HMAC secret from a key vault** for request fingerprints, instead of generated per process.
+- **Pass the idempotency key on to the bank**, so a bank timeout, where we can't tell if the payment went through, becomes safe to retry.

@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using PaymentGateway.Api.Controllers;
 using PaymentGateway.Api.Middleware;
 
-namespace PaymentGateway.Api.Tests.Middleware;
+namespace PaymentGateway.Api.Tests.Api.Middleware;
 
 public class CorrelationIdMiddlewareTests : IClassFixture<WebApplicationFactory<PaymentsController>>
 {

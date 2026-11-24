@@ -5,7 +5,7 @@ using Microsoft.Extensions.Time.Testing;
 using PaymentGateway.Api.Models.Requests;
 using PaymentGateway.Api.Validators;
 
-namespace PaymentGateway.Api.Tests.Validators;
+namespace PaymentGateway.Api.Tests.Api.Validators;
 
 public class PostPaymentRequestValidatorTests
 {
