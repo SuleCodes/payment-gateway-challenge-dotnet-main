@@ -1,0 +1,13 @@
+# Keep the build context small, and keep local build output out of the image.
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/*.user
+.git/
+.github/
+test/
+imposters/
+*.md
+docker-compose*.yml
+Dockerfile

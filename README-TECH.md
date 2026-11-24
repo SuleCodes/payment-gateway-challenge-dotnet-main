@@ -58,11 +58,8 @@ flowchart TD
 | `PaymentGateway.Api` | HTTP concerns: routing, request and response contracts, status codes, and explicit mapping from domain to contract (`Mappings/`). Also the **composition root** that wires everything together in `Program.cs`. | Application, Infrastructure |
 | `PaymentGateway.Common` | Cross-cutting building blocks shared by inner layers: `Result<T>` and `Error` for expected failures. | — |
 
-> **Why does Api reference Infrastructure?** Only so `Program.cs` can call `AddInfrastructure()` to register implementations. Controllers depend on `IPaymentService` and never use Infrastructure types directly.
 
 ### Runtime flow: `GET /api/v1/payments/{id}`
-
-At runtime, calls flow outside → in → out again. At compile time, every arrow still points inwards.
 
 ```mermaid
 sequenceDiagram
@@ -180,8 +177,7 @@ Idempotency-Key: order-42
 **What production would add:**
 - keys scoped per merchant (once there is authentication);
 - an expiry, typically 24 hours;
-- a shared store such as Redis or the database, so every instance sees the same keys, with the HMAC secret from a key vault;
-- passing the key on to the bank, which closes the remaining gap: a bank timeout where we can't tell whether the payment went through.
+- a distributed store such as Redis or the database, so every instance sees the same keys, with the HMAC secret from a key vault;
 
 ### What this buys us
 
@@ -240,13 +236,78 @@ Follow these for any new log line:
 | **Never log card data.** No PAN, no CVV, no full request bodies. The last four digits are the most that may appear. | |
 | **Levels:** `Information` for normal business events (including "not found"), `Warning` for unexpected but handled situations (e.g. bank retry), `Error` for failures needing attention. | |
 
-### Log output
 
-- **Production** (`appsettings.json`): JSON console logs with scopes and UTC timestamps, ready for a log collector.
-- **Development** (`appsettings.Development.json`): single-line, human-readable output, also with scopes.
+## Running with Docker
 
-Example (Development):
-
+```bash
+docker compose up -d --build
 ```
-info: PaymentGateway.Application.Payments.PaymentService[0] => ... => CorrelationId:demo-456 => ... Payment 00000000-0000-0000-0000-000000000002 not found
+
+This starts two containers on one compose network:
+
+| Service | Host port | What it is |
+|---|---|---|
+| `payment_gateway` | `5000` → container `8080` | This API, built from the `Dockerfile` |
+| `bank_simulator` | `8080` (and `2525`, Mountebank admin) | The acquiring bank simulator |
+
+```bash
+curl -X POST http://localhost:5000/api/v1/payments -H "Content-Type: application/json" \
+  -d '{"cardNumber":"2222405343248871","expiryMonth":4,"expiryYear":2027,"currency":"GBP","amount":100,"cvv":"123"}'
 ```
+
+The container runs as `Production`: JSON logs (`docker logs payment_gateway`), and no Swagger.
+
+### Dockerfile
+
+- **Multi-stage.** The `build` stage uses the .NET SDK image to restore and publish. The final image is based on `aspnet:8.0` (runtime only), so it contains no SDK, source code or tests.
+- **Layer caching.** The `.csproj` files, `nuget.config` and `Directory.Build.props` are copied and restored before the source, so the NuGet restore layer is reused until a dependency changes. A code change only re-runs the publish step.
+- **`.dockerignore`** keeps `bin/`, `obj/`, `.git/` and tests out of the build context, so local build output never leaks into the image.
+
+### Configuration through environment variables
+
+Any `appsettings.json` value can be overridden with an environment variable, using `__` for nesting. Compose sets:
+
+```yaml
+Bank__BaseUrl: http://bank_simulator:8080/   # overrides Bank:BaseUrl
+```
+
+Inside the compose network the bank is reached by its **service name**, not `localhost`: `localhost` inside the gateway container is the gateway itself. The same mechanism would supply secrets and per-environment settings in a real deployment, without rebuilding the image.
+
+### Not done yet
+
+- **No `HEALTHCHECK`.** It needs a `/health/live` endpoint (Phase 4).
+- **`depends_on` only orders startup.** It doesn't wait for the simulator to be ready. That's fine here: a payment that arrives too early gets a `502`, and the merchant can retry.
+- **HTTP only.** TLS would terminate at a load balancer or ingress in front of the container. `UseHttpsRedirection` logs one "failed to determine the https port" warning at startup for this reason.
+- **Smaller image.** A chiseled (distroless) `aspnet:8.0-jammy-chiseled` base would reduce size and attack surface: no shell, no package manager.
+
+## Quick reference
+
+All commands run from the repository root (the folder with `docker-compose.yml`).
+
+### Run everything in Docker
+
+| Task | Command |
+|---|---|
+| Build and start the API and bank simulator in the background | `docker compose up -d --build` |
+| See what's running | `docker compose ps` |
+| Follow the API logs (Ctrl+C stops following, not the app) | `docker compose logs -f payment_gateway` |
+| Rebuild after a code change | `docker compose up -d --build` |
+| **Stop and remove the containers** | `docker compose down` |
+| Pause the containers, keeping them for a quick restart | `docker compose stop`, then `docker compose start` |
+
+The containers keep running in the background until you stop them, even after the terminal is closed. Docker Desktop's **Containers** view shows the same thing, with start and stop buttons and a **Logs** tab.
+
+### Run the API locally (Swagger and debugging)
+
+| Task | Command |
+|---|---|
+| Start only the bank simulator | `docker compose up -d bank_simulator` |
+| Run the tests (no Docker needed) | `dotnet test` |
+
+### Where things are
+
+| What | Docker | Local `dotnet run` |
+|---|---|---|
+| Payments API | `http://localhost:5000/api/v1/payments` | `https://localhost:7092/api/v1/payments` |
+| Swagger | Not enabled (Production mode) | `https://localhost:7092/swagger` |
+| Bank simulator | `http://localhost:8080` | `http://localhost:8080` (from Docker) |
